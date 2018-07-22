@@ -1,0 +1,543 @@
+#include "configana.h"
+#include <iostream>
+#include <iomanip>
+#include <algorithm>
+#include <iterator>
+#include <functional>
+#include <numeric>
+#include <string>
+#include <climits>
+#include <cassert>
+#include <cstdlib>
+#include <sstream>
+
+#include "TROOT.h"
+#include "TSystem.h"
+#include "TChain.h"
+#include "TClonesArray.h"
+#include "TFrame.h"
+#include "TRandom.h"
+#include "TStopwatch.h"
+#include "TFile.h"
+#include "TH1K.h"
+#include "TH1.h"
+#include "TH2.h"
+#include "TProfile.h"
+
+#include "ElectronTriggerEfficiency.h"
+#include "AnaUtil.h"
+#include "PhysicsObjects.h"
+
+using std::cout;
+using std::cerr;
+using std::endl;
+using std::string;
+using std::ostringstream;
+using std::vector;
+using std::map;
+using std::pair;
+using std::abs;
+using std::max;
+using std::sqrt;
+using std::sort;
+using std::setprecision;
+using std::setw;
+
+using namespace vhtm;
+
+// -----------
+// Constructor
+// -----------
+ElectronTriggerEfficiency::ElectronTriggerEfficiency()
+  : AnaBase(),
+    _dumpEvent(false),
+    _iFlagL1(-1),
+    _iFlagL2(-1)
+{
+  _triggerPathLeg1.clear();  
+  _triggerPathLeg2.clear();  
+}
+// ----------
+// Destructor
+// ----------
+ElectronTriggerEfficiency::~ElectronTriggerEfficiency() 
+{}
+// -------------------------------------------------------
+// Prepare for the run, do necessary initialisation etc.
+// -------------------------------------------------------
+bool ElectronTriggerEfficiency::beginJob() 
+{ 
+  AnaBase::beginJob();
+
+  // Open the output ROOT file
+  _histf->cd();
+  bookHistograms();
+
+  return true;
+}
+// ---------------
+// Book histograms
+// ---------------
+void ElectronTriggerEfficiency::bookHistograms() 
+{
+  new TH1D("evcounter", "Selected event counter", 9, -0.5, 8.5);
+  new TH1F("invMass","Invariant Mass of Tag and Probe",100,30.0,130.0);
+  new TH1F("invMassPass","Invariant Mass of Tag and Probe(Events Selected By Trigger)",100,30.0,130.0);
+  new TH1F("invMassFail","Invariant Mass of Tag and Probe(Events Failed By Trigger)",100,30.0,130.0);
+  new TH1F("invMassTrigPass","Invariant Mass of Tag and Probe TriggerObject",100,30.0,130.0);
+  new TH1F("invMassTrigFail","Invariant Mass of Tag and Probe TriggerObject(failed events)",100,30.0,130.0);
+  new TH1F("deltaZVtx", "Z-distance Vertices of Tag and Probe", 100, -0.01, 0.01);
+
+  int nBin = 17;
+  Double_t xmin = -1.5;
+  Double_t xbins[nBin+1];
+  for (int i = 0; i <nBin+1; i++) {
+    if (i <= 11) xbins[i] = xmin + i*5.0;
+    else  xbins[i] = xbins[i-1] + 10.0;
+    std::cout << "Bin #" << i << "  Xval " << xbins[i] << std::endl;
+  }
+  new TH1F("tagPt","Pt of Tag", 100, -0.5, 199.5);
+  new TH1F("tagPtv","Pt of Tag (var. bin)",nBin, xbins);
+  new TH1F("tagEta","Eta of Tag", 84, -2.1, 2.1);
+  new TH1F("tagPhi", "Phi of Tag", 128, -3.2, 3.2);
+  new TH1F("tagDeltaR", "DeltaR of Tag wrt Matched Trigger Object", 250, 0.0, 0.5);
+  new TH1F("tagDeltaPt", "DeltaPt of Tag wrt Matched Trigger Object", 100, -25.0, 25.0);
+  new TH1F("trigTagPt","Pt of Trigger Object matched with Tag", 100, -0.5, 199.5);
+  new TH1F("trigTagEta","Eta of Trigger Object matched with Tag", 84, -2.1, 2.1);
+  new TH1F("trigTagPhi","Phi of Trigger Object matched with Tag", 128, -3.2, 3.2);
+  new TH1F("probePt","Pt of Probe ", 100, -0.5, 199.5);
+  new TH1F("probePtv","Pt of Probe(var. bin)", nBin, xbins);
+  new TH1F("probeEta","Eta of Probe ", 84, -2.1, 2.1);
+  new TH1F("probePhi","Phi of Probe ", 128, -3.2, 3.2);
+  new TH1F("probeDeltaR", "DeltaR of Probe wrt Matched Trigger Object", 250, 0.0, 0.5);
+  new TH1F("probeDeltaPt", "DeltaPt of Probe wrt Matched Trigger Object", 100, -25.0, 25.0);
+  new TH1F("matchedProbePt","Pt of Trigger Object matched with Probe",100,-0.5,199.5);
+  new TH1F("matchedProbePtv","Pt of Trigger Object matched with Probe(var. bin)",nBin, xbins);
+  new TH1F("matchedProbeEta","Eta of Trigger Object matched with Probe",84,-2.1,2.1);
+  new TH1F("matchedProbePhi","Phi of Trigger Object matched with Probe", 128,-3.2,3.2);
+
+  new TH2F("tagVsTrigPt","Pt Corr Tag Vs Trigger",100,-0.5,199.5,100,-0.5,199.5);
+  new TH2F("tagVsTrigEta","Eta Corr Tag Vs Trigger",84,-2.1,2.1,84,-2.1,2.1);
+  new TH2F("tagVsTrigPhi","Phi Corr Tag Vs Trigger",128,-3.2,3.2,128,-3.2,3.2);
+  new TH2F("tagDRVsPt","Tag dR Vs Pt",50,0.0,100.0, 250, 0.0, 0.5);
+  new TH2F("tagDRVsInvMass","Tag dR Vs Invariant Mass",100, 30.0, 130, 250, 0.0, 0.5);
+  new TH2F("probeVsTrigPt","Pt Corr Probe Vs Trigger",100,-0.5,199.5,100,-0.5,199.5);
+  new TH2F("probeVsTrigEta","Eta Corr Probe Vs Trigger",84,-2.1,2.1,84,-2.1,2.1);
+  new TH2F("probeVsTrigPhi","Phi Corr Probe Vs Trigger",128,-3.2,3.2,128,-3.2,3.2);
+  new TH2F("probeDRVsPt","ProbedR Vs Pt", 50, 0.0, 100.0, 250, 0.0, 0.5);
+  new TH2F("probeDRVsInvMass","Probe dR Vs Invariant Mass",100, 30.0, 130, 250, 0.0, 0.5);
+  new TH2F("probeVsTagDz", "Probe dZ Vs Tag dZ",100,-0.1,0.1,100,-0.1,0.1);
+  new TH2F("probeVsTagDR", "Probe dR Vs Tag dR",250,0.0,0.5,250,0.0,0.5);
+  new TH1F("probeDRFail", "Probe DR (failed events)", 400, 0.0,4.0); 
+  new TH2F("probeVsTagDRFail", "Probe dR Vs Tag DR (failed events)", 400, 0.0,4.0, 400, 0.0,4.0);
+  new TH1F("probeTrigDeltaPtFail", "deta Pt of Probe and TrigObject (failed events)", 100, -25.0, 25.0);
+  new TH2F("probeVsTrigPtFail","Pt Corr Probe Vs Trigger (failed events)",100,-0.5,199.5,100,-0.5,199.5);    
+  new TH2F("probeVsTrigEtaFail","Eta Corr Probe Vs Trigger (failed events)",84,-2.1,2.1,84,-2.1,2.1);
+  new TH2F("probeVsTrigPhiFail","Phi Corr Probe Vs Trigger (failed events)",128,-3.2,3.2,128,-3.2,3.2);
+
+  new TH2F("probePtVsMassPass","Pt Vs Invariant Mass for passing probes", 120, 60, 120, 200, 0, 200);
+  new TH2F("probePtVsMassFail","Pt Vs Invariant Mass for failing probes", 120, 60, 120, 200, 0, 200);
+}
+
+// -------------------
+// The main event loop
+// -------------------
+void ElectronTriggerEfficiency::clearLists() {
+  vtxList.clear();
+  muoList.clear();
+  eleList.clear();
+  tauList.clear();
+  bjetList.clear();
+  trigObjList.clear();
+}
+void ElectronTriggerEfficiency::eventLoop() 
+{
+  // Initialize analysis
+  if (!beginJob()) return;
+
+  int nPrint = max(10000, nEvents/1000);
+
+  Options op;
+  op.verbose = false;
+  op.usesbit = true;  // Crucial
+  op.printselected = false;
+
+  // --------------------
+  // Start the event loop
+  // --------------------
+  string lastFile;
+  for (int ev = 0; ev < nEvents; ev++) {
+    clearEvent();
+    int lflag = _chain->LoadTree(ev); 
+    int nentries = getEntry(lflag);    // returns bytes read
+    
+    string currentFile(gSystem->BaseName(_chain->GetCurrentFile()->GetName())); 
+
+    const Event* evt = dynamic_cast<Event*>(eventA->At(0));
+    assert(evt);
+
+    int run   = evt->run;
+    int event = evt->event;
+    int lumis = evt->lumis;
+
+    // Show status of the run
+    if (currentFile != lastFile) 
+    cout << "Tree# " << setw(4) << _chain->GetTreeNumber()  
+         << " ==> " << currentFile 
+         << " <<< Run# " << run
+         << " <<< Lumis# " << lumis
+         << " Event# " << setw(8) << event << " >>> " 
+         << " Events proc. " << setw(8) << ev 
+         << endl;
+    lastFile = currentFile;
+
+    // Show the status 
+    if (ev%nPrint == 0) 
+    cout << "Tree# " << setw(4) << _chain->GetTreeNumber()  
+         << " ==> " << _chain->GetCurrentFile()->GetName() 
+         << " <<< Run# " << run 
+         << " <<< Lumis# " << lumis
+         << " Event# " << setw(8) << event << " >>> " 
+         << " Events proc. " << setw(8) << ev 
+         << endl;
+
+    if (_logOption > 0) 
+    _fLog << "run: " << run
+          << ", event: " << event
+          << ", n_tau: "<< n_tau
+          << ", n_muon: "<< n_muon
+          << ", n_jet: " << n_jet
+          << ", n_vertex: " << n_vertex
+          << ", n_met: " << n_met
+          << ", n_electron: " << n_electron 
+          << endl;
+
+    AnaUtil::fillHist1D("evcounter", 0);
+
+    // Trigger selection, do not check prescale
+    if (_useTrigger && !isTriggered(false)) continue;
+    AnaUtil::fillHist1D("evcounter", 1);
+
+    clearLists();
+    op.verbose = (_logOption >> 1 & 0x1); 
+    findVtxInfo(vtxList, op, _fLog);
+    int nvtx = vtxList.size();
+    double vz = ( nvtx > 0 ) ? vtxList.at(0).z : -999;
+
+    op.verbose = (_logOption >> 4 & 0x1); 
+    findElectronInfo(eleList, vz, op, _fLog);
+
+    op.verbose = (_logOption >> 2 & 0x1); 
+    findTauInfo(tauList, vz, op, _fLog);
+
+    op.verbose = (_logOption >> 3 & 0x1); 
+    findMuonInfo(muoList, vz, op, _fLog);
+
+    op.verbose = (_logOption >> 5 & 0x1); 
+    findJetInfo(bjetList, op, _fLog);
+
+    findTriggerObjectInfo(trigObjList);
+
+    if (_logOption > 0)
+    _fLog << "run: " << run
+          << ", event: " << event
+          << ", n_vertex_good: " << nvtx
+          << ", n_muon_selected: " << muoList.size()
+          << ", n_electron_selected: " << eleList.size()
+          << ", n_tau_selected: " << tauList.size()
+          << ", n_bjet_selected: " << bjetList.size()
+          << endl;
+
+    // Event Selection Starts here .....
+    // presence of > 1 good vertex
+    if (vtxList.size() < 1) continue;
+    AnaUtil::fillHist1D("evcounter", 2);
+
+    fillTriggerFlags();
+    selectEvent();
+  }  
+  // Analysis is over
+  endJob();
+}
+// ----------------------------------------------------------
+// Perform event selection, For selection of Z -> e+e- events
+// we need,
+//   - > 0 Tight electron
+//   - event within e+e- invariant mass window
+// ----------------------------------------------------------
+void ElectronTriggerEfficiency::selectEvent() 
+{
+  if (eleList.size() < 2) return;
+  AnaUtil::fillHist1D("evcounter", 3);
+  if (tauList.size() < 1) return;
+  AnaUtil::fillHist1D("evcounter", 4);
+  if (muoList.size() || bjetList.size()) return;
+  AnaUtil::fillHist1D("evcounter", 5);
+
+  if (_dumpEvent) {
+    dumpTriggerPaths(_fLog);
+    dumpEvent("01010", _fLog, true);
+    dumpTriggerObjectInfo(trigObjList, _fLog);
+  }
+
+  double maxPtDiff = AnaUtil::cutValue(_evselCutMap, "maxPtDiff");
+  // Now find the Tag electron using offline information only
+  bool tag_found = false;   
+  int indx = 0;
+  random_shuffle (eleList.begin(), eleList.end());
+  for (vector<Electron>::const_iterator it  = eleList.begin(); 
+                                        it != eleList.end(); ++it,++indx) {
+    double drmin = 999;
+    double dpt = -1;
+    const Electron& ele = (*it);
+    TLorentzVector lve;
+    lve.SetPtEtaPhiE(ele.pt, ele.eta, ele.phi, ele.energy);
+    for (vector<Tau>::const_iterator jt  = tauList.begin();
+                                     jt != tauList.end(); ++jt) {
+      const Tau& tau = (*jt);
+      TLorentzVector lvt;
+      lvt.SetPtEtaPhiE(tau.pt, tau.eta, tau.phi, tau.energy);
+      double dr = AnaUtil::deltaR(lve, lvt);
+      if (dr < drmin) {
+        drmin = dr;
+        dpt = ele.pt - tau.pt;
+      }
+    }
+    if (drmin < AnaUtil::cutValue(_evselCutMap, "maxDr") && abs(dpt) < maxPtDiff) 
+    {
+      tag_found = true;
+      break;
+    }
+  }
+  if (!tag_found) return;
+  AnaUtil::fillHist1D("evcounter", 6);
+
+  // match the tag with the trigger object
+  const Electron& eleTag = eleList.at(indx);
+  int ntobj = trigObjList.size();
+  TLorentzVector taglv;
+  taglv.SetPtEtaPhiE(eleTag.pt, eleTag.eta, eleTag.phi, eleTag.energy);
+  int tindx = -1;
+  uint flag = 0;
+  double drTag = matchTriggerObject(trigObjList, taglv, _triggerPathLeg1, -1, maxPtDiff, tindx, flag);
+  if (tindx < 0 || tindx >= ntobj) return;
+  AnaUtil::fillHist1D("evcounter", 7);
+
+  AnaUtil::fillHist1D("tagDeltaR", drTag);
+
+  const TriggerObject& tagTrigObj = trigObjList.at(tindx); 
+  double drPtTag = eleTag.pt - tagTrigObj.pt;
+  AnaUtil::fillHist1D("tagDeltaPt", drPtTag);
+  AnaUtil::fillHist2D("tagDRVsPt", eleTag.pt, drTag);
+
+  if (drTag > AnaUtil::cutValue(_evselCutMap, "maxDr") || flag != 1) return;
+  AnaUtil::fillHist1D("evcounter", 8);
+
+  AnaUtil::fillHist1D("tagPt", eleTag.pt);
+  AnaUtil::fillHist1D("tagPtv", eleTag.pt);
+  AnaUtil::fillHist1D("tagEta", eleTag.eta);
+  AnaUtil::fillHist1D("tagPhi", eleTag.phi);
+    
+  TLorentzVector tagTrigTL;
+  tagTrigTL.SetPtEtaPhiE(tagTrigObj.pt, tagTrigObj.eta, tagTrigObj.phi, tagTrigObj.energy);
+
+  AnaUtil::fillHist1D("trigTagPt", tagTrigObj.pt);
+  AnaUtil::fillHist1D("trigTagEta", tagTrigObj.eta);
+  AnaUtil::fillHist1D("trigTagPhi", tagTrigObj.phi);
+    
+  AnaUtil::fillHist2D("tagVsTrigPt", eleTag.pt, tagTrigObj.pt);
+  AnaUtil::fillHist2D("tagVsTrigEta", eleTag.eta, tagTrigObj.eta);
+  AnaUtil::fillHist2D("tagVsTrigPhi", eleTag.phi, tagTrigObj.phi);
+  
+  bool isGoodTagVtx;
+  TVector3 vtxTagEle = findLeptonVtx(eleTag.vtxIndex, isGoodTagVtx);
+  if (!isGoodTagVtx) return;
+  AnaUtil::fillHist1D("evcounter", 9);
+
+  // probe
+  int jndx = 0;
+  for (vector<Electron>::const_iterator it  = eleList.begin(); 
+                                        it != eleList.end(); ++it,++jndx) {
+    if (indx == jndx) continue;
+    const Electron& ele = (*it);
+
+    bool isGoodPrbVtx;
+    TVector3 vtxPrbEle = findLeptonVtx(ele.vtxIndex, isGoodPrbVtx);
+    if (!isGoodPrbVtx) continue;
+
+    double dVtxZ = vtxTagEle.z() - vtxPrbEle.z();
+    AnaUtil::fillHist1D("deltaZVtx", dVtxZ);
+    if (abs(dVtxZ) > AnaUtil::cutValue(_evselCutMap, "maxDz")) continue;
+
+    AnaUtil::fillHist2D("probeVsTagDz", eleTag.vtxDistZ, ele.vtxDistZ);
+
+    TLorentzVector prblv;
+    prblv.SetPtEtaPhiE(ele.pt, ele.eta, ele.phi, ele.energy);
+    TLorentzVector lv = taglv + prblv;
+    double mass = lv.M();
+    AnaUtil::fillHist1D("invMass", mass);
+    AnaUtil::fillHist2D("tagDRVsInvMass", mass, drTag);
+    AnaUtil::fillHist2D("probeDRVsPt", ele.pt, drTag);
+
+    if (abs(mass - 91.2) > AnaUtil::cutValue(_evselCutMap, "ZMassWindow")) continue;
+    if (_iFlagL2 == 1) 
+      AnaUtil::fillHist1D("invMassPass", mass);
+    else 
+      AnaUtil::fillHist1D("invMassFail", mass);
+ 
+    int pindx = -1;
+    uint flag2 = 0;
+    double drProbe = matchTriggerObject(trigObjList, prblv, _triggerPathLeg2, tindx, maxPtDiff, pindx, flag2);
+    if (pindx < 0 || pindx >= ntobj) {
+      _fLog << "=> WARNING. No Trigger Object found for Probe! total # of TriggerObjects: " 
+            << trigObjList.size() 
+            << ", dr: " << drProbe 
+            << ", pindx: " << pindx 
+            << endl;
+      continue;
+    }
+    AnaUtil::fillHist1D("probePt", ele.pt);
+    AnaUtil::fillHist1D("probePtv", ele.pt);
+    AnaUtil::fillHist1D("probeEta", ele.eta);
+    AnaUtil::fillHist1D("probePhi", ele.eta);
+
+    const TriggerObject& probeTrigObj = trigObjList.at(pindx);
+    TLorentzVector probeTrigTL;
+    probeTrigTL.SetPtEtaPhiE(probeTrigObj.pt, probeTrigObj.eta, probeTrigObj.phi, probeTrigObj.energy);
+
+    AnaUtil::fillHist2D("probeDRVsInvMass", mass, drProbe); 
+    AnaUtil::fillHist1D("probeDeltaR", drProbe);
+    AnaUtil::fillHist2D("probeVsTagDR", drTag, drProbe);
+    double massTrig = (tagTrigTL + probeTrigTL).M();
+    double drPtProbe = ele.pt - probeTrigObj.pt;
+    _fLog << "=> Summary:" 
+          << setprecision(2)
+          << " TagPt: "  << eleTag.pt
+          << " TagTrigPt: " << tagTrigObj.pt 
+          << " ProbePt: " << ele.pt 
+          << " ProbeTrigPt: " << probeTrigObj.pt 
+          << " Flag: " << flag2 
+          << " Mass: " << mass 
+          << " Mass Trig: " << massTrig 
+          << setprecision(4)
+          << " drTag: " << drTag 
+          << " drProbe: " << drProbe 
+          << endl;
+
+    if (drProbe < AnaUtil::cutValue(_evselCutMap, "maxDr") && flag2 == 1) {
+      AnaUtil::fillHist1D("matchedProbePt", ele.pt);
+      AnaUtil::fillHist1D("matchedProbePtv", ele.pt);
+      AnaUtil::fillHist1D("matchedProbeEta", ele.eta);
+      AnaUtil::fillHist1D("matchedProbePhi", ele.phi);
+      AnaUtil::fillHist2D("probeVsTrigPt", ele.pt, probeTrigObj.pt);
+      AnaUtil::fillHist1D("probeDeltaPt", drPtProbe);
+      AnaUtil::fillHist2D("probeVsTrigEta", ele.eta, probeTrigObj.eta);
+      AnaUtil::fillHist2D("probeVsTrigPhi", ele.phi, probeTrigObj.phi);
+      AnaUtil::fillHist1D("invMassTrigPass", massTrig);
+      AnaUtil::fillHist2D("probePtVsMassPass", ele.pt, mass);
+      break;
+    }
+    else {
+      AnaUtil::fillHist1D("probeDRFail", drProbe);
+      AnaUtil::fillHist2D("probeVsTagDRFail", drTag, drProbe);
+      AnaUtil::fillHist1D("probeTrigDeltaPtFail", ele.pt - probeTrigObj.pt);
+      AnaUtil::fillHist2D("probeVsTrigPtFail", ele.pt, probeTrigObj.pt);
+      AnaUtil::fillHist2D("probeVsTrigEtaFail", ele.eta, probeTrigObj.eta);
+      AnaUtil::fillHist2D("probeVsTrigPhiFail", ele.phi, probeTrigObj.phi);
+      AnaUtil::fillHist1D("invMassTrigFail", massTrig);
+      AnaUtil::fillHist2D("probePtVsMassFail", ele.pt, mass);
+    }
+  }
+}
+// ------------------------------------------------------------------
+// Analysis is over, print summary, save histograms release resources
+// ------------------------------------------------------------------
+void ElectronTriggerEfficiency::endJob() {  
+  _fLog << resetiosflags(ios::fixed);
+
+  closeFiles();
+
+  _histf->cd();
+  _histf->Write();
+  _histf->Close();
+  delete _histf;
+}
+void ElectronTriggerEfficiency::fillTriggerFlags(bool verbose) {
+  int nFlag1 = 0,
+      nFlag2 = 0;
+  for (uint i = 0; i < _hltpaths->size(); ++i) {
+    string path_name = (*_hltpaths).at(i);
+    int prescale     = (*_hltprescales).at(i);  
+    int result       = (*_hltresults).at(i);  
+    if (matchTriggerPath(_triggerPathLeg1, path_name) && result == 1)
+      ++nFlag1;
+    if (matchTriggerPath(_triggerPathLeg2, path_name) && result == 1)
+      ++nFlag2;
+  }
+  if (verbose && (nFlag1 > 1 || nFlag2 > 1)) 
+    cout << "=> Multiple Match: nFlag1: " << nFlag1 
+         << ", nFlag2: " << nFlag2 
+         << endl;
+  _iFlagL1 = (nFlag1 > 0) ? 1 : 0;
+  _iFlagL2 = (nFlag2 > 0) ? 1 : 0;
+}
+bool ElectronTriggerEfficiency::readJob(const string& jobFile, int& nFiles)
+{
+  if (!AnaBase::readJob(jobFile, nFiles)) return false;
+
+  static const int BUF_SIZE = 256;
+
+  // Open the file containing the datacards
+  ifstream fin(jobFile.c_str(), ios::in);    
+  if (!fin) {
+    cerr << "Input File: " << jobFile << " could not be opened!" << endl;
+    return false;
+  }
+
+  // note that you must use a pointer (reference!) to the cut map
+  // in order to avoid scope related issues
+  map<string, map<string, double>* > hmap;
+  hmap.insert(pair<string, map<string, double>* >("evselCutList", &_evselCutMap));
+
+  char buf[BUF_SIZE];
+  vector<string> tokens;
+  while (fin.getline(buf, BUF_SIZE, '\n')) {  // Pops off the newline character
+    string line(buf);
+    if (line.empty() || line == "START") continue;   
+
+    // enable '#' and '//' style comments
+    if (line.substr(0,1) == "#" || line.substr(0,2) == "//") continue;
+    if (line == "END") break;
+
+    AnaUtil::tokenize(line, tokens);
+    int vsize = tokens.size();
+    assert(vsize > 1);
+    string key = tokens.at(0);
+
+    if (key == "triggerPathForLeg1")
+      AnaUtil::buildList(tokens, _triggerPathLeg1);
+    else if (key == "triggerPathForLeg2")
+      AnaUtil::buildList(tokens, _triggerPathLeg2);
+    else if (key == "dumpEvent")
+      _dumpEvent = atoi(tokens[1].c_str()) > 0 ? true : false;
+    else if (key == "evselCutList")
+      AnaUtil::storeCuts(tokens, hmap);
+
+    tokens.clear();
+  }
+  // Close the file
+  fin.close();
+
+  printJob();
+
+  return true;
+}
+void ElectronTriggerEfficiency::printJob(ostream& os) const
+{
+  AnaBase::printJob(os);
+
+  map<string, map<string, double> > hmap;
+  hmap.insert(pair<string, map<string, double> >("evselCutList", _evselCutMap));
+
+  AnaUtil::showCuts(hmap, os);
+}

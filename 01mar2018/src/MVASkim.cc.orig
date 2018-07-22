@@ -1,0 +1,43 @@
+#include <iostream>
+#include <memory>
+#include "TFile.h"
+#include "TTree.h"
+#include "MVASkim.h"
+
+using std::string;
+using std::cout;
+using std::endl;
+
+MVASkim::MVASkim(const string& filename) {
+  _mvaFile = TFile::Open(filename.c_str(), "RECREATE", "Skimmed Tree");
+  _tree = new TTree("RTree", "RTree");
+  _tree->Branch("muEta",      &_varList.muEta,      "muEta/F");
+  _tree->Branch("muPt",       &_varList.muPt,       "muPt/F");
+  _tree->Branch("tau1Eta",    &_varList.tau1Eta,    "tau1Eta/F");
+  _tree->Branch("tau1Pt",     &_varList.tau1Pt,     "tau1Pt/F");
+  _tree->Branch("tau2Eta",    &_varList.tau2Eta,    "tau2Eta/F");
+  _tree->Branch("tau2Pt",     &_varList.tau2Pt,     "tau2Pt/F");
+  _tree->Branch("diTauEta",   &_varList.diTauEta,   "diTauEta/F");
+  _tree->Branch("diTauPt",    &_varList.diTauPt,    "diTauPt/F");
+  _tree->Branch("dphiMuTau1", &_varList.dphiMuTau1, "dphiMuTau1/F");
+  _tree->Branch("met",        &_varList.met,        "met/F");
+  _tree->Branch("alpha",      &_varList.alpha,      "alpha/F");
+  _tree->Branch("acop",      &_varList.alpha,      "acop/F");
+  _tree->Branch("dphiMuDiTau", &_varList.dphiMuDiTau, "dphiMuDiTau/F");
+  _mvaFile->ls();
+}
+MVASkim::~MVASkim() {
+  delete _mvaFile;
+}
+void MVASkim::fill(const TreeVariables& varList) {
+  memcpy(&_varList, &varList, sizeof(varList));
+  _mvaFile->cd();
+  _tree->Fill();  
+}
+void MVASkim::close() {
+  _mvaFile->cd();
+  _tree->Print();
+  _tree->Write();
+  _mvaFile->Write();
+  _mvaFile->Close();
+}

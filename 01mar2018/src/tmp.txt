@@ -1,0 +1,60 @@
+void AnaBase::findGenInfo(vector<GenParticle>& genMuonList, vector<GenParticle>& genTauList) {
+  // Generator level information
+  if (!n_genparticle) return;
+  for (int indx = 0; indx < n_genparticle; ++indx) {
+    const GenParticle* gp = dynamic_cast<GenParticle*>(genParticleA->At(indx));
+    if (!gp) continue;
+      
+    int pdgid = abs(gp->pdgId);
+    if (pdgid != 13 && pdgid != 15) continue;
+
+    int status = gp->status;
+    // looking for a Hadronically decaying Tau whose mother is Higgs
+    if (pdgid == 15 && status == 2) {
+      vector<int> m = gp->motherIndices;
+      const GenParticle* mgp = dynamic_cast<GenParticle*>(genParticleA->At(m.at(0)));
+      if (!mgp) continue;
+
+      int pid = mgp->pdgId;
+      if (abs(pid) == pdgid) {
+        vector<int> m2 = mgp->motherIndices;
+        const GenParticle* m2gp = dynamic_cast<GenParticle*>(genParticleA->At(m2.at(0)));
+        if (!m2gp) continue;
+        pid = m2gp->pdgId;
+      }
+      if (abs(pid) != 25) continue; // Assert Higgs
+
+      vector<int> d = gp->daughtIndices;
+      int ndau = 0; 
+      for (vector<int>::const_iterator it = d.begin(); it != d.end(); ++it) {
+        int di = *it;
+        if (di >= n_genparticle) continue;
+        const GenParticle* dgp = dynamic_cast<GenParticle*>(genParticleA->At(di));
+        if (!dgp) continue;
+        int pid = abs(dgp->pdgId);
+        if (pid == 16) continue;
+        if (pid != 11 && pid != 13 && pid != 12 && pid != 14 && pid != 22) ++ndau;
+      }
+      if (ndau) genTauList.push_back(*gp);
+    }
+    // Looking for Muon whose mother is W boson  
+    else if (pdgid == 13 && status == 1) {
+      vector<int> m = gp->motherIndices;
+      const GenParticle* mgp = dynamic_cast<GenParticle*>(genParticleA->At(m.at(0)));
+      if (!mgp) continue;
+
+      int mmid = mgp->pdgId;
+      if (abs(mmid) == pdgid) {
+        vector<int> m2 = mgp->motherIndices;
+        const GenParticle* m2gp = dynamic_cast<GenParticle*>(genParticleA->At(m2.at(0)));
+        if (!m2gp) continue;
+        mmid = m2gp->pdgId;
+      }
+      if (abs(mmid) == 24) genMuonList.push_back(*gp);
+    }
+  }
+  if (genMuonList.size() > 1) 
+    sort(genMuonList.begin(), genMuonList.end(), PtComparator<GenParticle>());
+  if (genTauList.size() > 1)
+    sort(genTauList.begin(), genTauList.end(), PtComparator<GenParticle>());
+}

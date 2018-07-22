@@ -1,0 +1,616 @@
+#include "configana.h"
+#include <iostream>
+#include <sstream>
+#include <iomanip>
+#include <algorithm>
+#include <iterator>
+#include <functional>
+#include <numeric>
+#include <string>
+#include <climits>
+#include <cassert>
+#include <cstdlib>
+
+#include "TROOT.h"
+#include "TSystem.h"
+#include "TChain.h"
+#include "TClonesArray.h"
+#include "TFrame.h"
+#include "TRandom.h"
+#include "TStopwatch.h"
+#include "TFile.h"
+#include "TH1K.h"
+#include "TH1.h"
+#include "TH2.h"
+#include "TProfile.h"
+
+#include "SelectionEfficiency.h"
+#include "AnaUtil.h"
+#include "PhysicsObjects.h"
+
+using std::cout;
+using std::cerr;
+using std::endl;
+using std::string;
+using std::ostringstream;
+using std::vector;
+using std::map;
+using std::pair;
+using std::abs;
+using std::max;
+using std::sqrt;
+using std::sort;
+using std::setprecision;
+using std::setw;
+
+using namespace vhtm;
+
+// -----------
+// Constructor
+// -----------
+SelectionEfficiency::SelectionEfficiency()
+  : AnaBase(), _workflow("efficiency")
+{}
+// ----------
+// Destructor
+// ----------
+SelectionEfficiency::~SelectionEfficiency() 
+{}
+// -------------------------------------------------------
+// Prepare for the run, do necessary initialisation etc.
+// -------------------------------------------------------
+bool SelectionEfficiency::beginJob() 
+{ 
+  AnaBase::beginJob();
+
+   _histf->cd();
+  bookHistograms();
+
+  return true;
+}
+// ---------------
+// Book histograms
+// ---------------
+void SelectionEfficiency::bookHistograms() 
+{
+  if (_isMC && _usePUWt) {
+    new TH1D("npu", "nPileUp", 50, 0, 50);
+    new TH1D("puwt", "PileUp weight factor", 100, 0, 2.0);
+    new TH1D("trueNInt", "True N-Interaction", 50, 0, 50);
+  } 
+  new TH1D("counter_gen", "Selected event counter", 37, -0.5, 36.5);
+
+  new TH1F("muPt", "pt distribution of the muon after all cut", 140, -0.5, 139.5);
+  new TH1F("tau1Pt", "pt distribution of the tau1 after all cut", 140, -0.5, 139.5);
+  new TH1F("tau2Pt", "pt distribution of the tau2 after all cut", 140, -0.5, 139.5);
+  new TH1F("met", "met distribution of the event after all cut", 350, -0.5, 349.5);
+  new TH1F("MuTauMass", "vissible mass distribution of the muon and leading tau after all cut", 200, -0.5, 199.5);
+  new TH1F("Mt_Mu_Met", "transverse mass distribution of the muon and met after all cut", 300, -0.5, 299.5);
+  new TH1F("diTauPt", "Pt distribution of the diTau after all cut", 300, -0.5, 299.5);
+  new TH1F("TauTauMass", "vissible mass distribution of the lead and sub-lead tau after all cut", 300, -0.5, 299.5);
+  new TH1F("diTauChg", "DiTau Charge Sum", 8, -4, 4);
+}
+// -------------------
+// The main event loop
+// -------------------
+void SelectionEfficiency::clearLists() {
+  vtxList.clear();
+  muoList.clear();
+  eleList.clear();
+  tauList.clear();
+  bjetList.clear();
+  trigObjList.clear();
+
+  genMuonList.clear();
+  genTauList.clear();
+}
+void SelectionEfficiency::eventLoop() 
+{
+  // Initialize analysis
+  if (!beginJob()) return;
+  
+  int nPrint = max(10000, nEvents/1000);
+
+  Options op;
+  op.verbose = false;
+  op.usesbit = true;  // Crucial
+  op.printselected = false;
+
+  // --------------------
+  // Start the event loop
+  // --------------------
+  string lastFile;
+  ulong tbytes = 0;
+  for (int ev = 0; ev < nEvents; ++ev) {
+    clearEvent();
+    int lflag = _chain->LoadTree(ev); 
+    tbytes += getEntry(lflag);    // returns total bytes read
+
+    const Event* evt = dynamic_cast<Event*>(eventA->At(0));
+    assert(evt);
+
+    // PileUP weight
+    _puevWt = 1; // for data 
+    if (_isMC && _usePUWt) {
+      int npu = 0;
+      _puevWt = wtPileUp(npu);
+
+      AnaUtil::fillHist1D("npu", npu, 1.0);
+
+      vector<int> list = evt->trueNInt;
+      AnaUtil::fillHist1D("trueNInt", (list.size() ? list.at(0) : 0), 1.0);
+    }
+    AnaUtil::fillHist1D("counter_gen", 0, _puevWt);
+
+    string currentFile(gSystem->BaseName(_chain->GetCurrentFile()->GetName())); 
+
+    int run   = evt->run;
+    int event = evt->event;
+    int lumis = evt->lumis;
+
+    // Show status of the run
+    if (currentFile != lastFile) 
+    cout << "Tree# " << setw(4) << _chain->GetTreeNumber()  
+         << " ==> " << currentFile 
+         << " <<< Run# " << run
+         << " Lumis# " << lumis
+         << " Event# " << setw(8) << event << " >>> " 
+         << " Events proc. " << setw(8) << ev 
+         << endl;
+    lastFile = currentFile;
+
+    // Show the status 
+    if (ev%nPrint == 0) 
+    cout << "Tree# " << setw(4) << _chain->GetTreeNumber()  
+         << " ==> " << _chain->GetCurrentFile()->GetName() 
+         << " <<< Run# " << run 
+         << " Lumis# " << lumis
+         << " Event# " << setw(8) << event << " >>> " 
+         << " Events proc. " << setw(8) << ev 
+         << endl;
+
+    if (_eventIdMap.size()) {
+      std::ostringstream mkey;
+      mkey << event << "-" << lumis << "-" << run;
+      if (_eventIdMap.find(mkey.str()) == _eventIdMap.end()) continue;
+    }
+    clearLists();
+    if (_isSignal) {
+      findGenInfo(genMuonList, genTauList);
+      if (genMuonList.size() != 1 || genTauList.size() != 2) {
+#if 0
+        _fLog << "=> Event " << event
+              << " Lumis " << lumis
+              << " Run " << run 
+              << endl;
+        _fLog << "=> nMuon: " << genMuonList.size()
+              << " nTau: " << genTauList.size()
+              << endl;
+        dumpGenInfo(_fLog);
+#endif
+        continue;
+      }
+    }
+    AnaUtil::fillHist1D("counter_gen", 1, _puevWt);
+
+    if (_logOption > 0) {
+      _fLog << "Event " << event
+            << " Lumis " << lumis
+            << " Run " << run << endl;
+     _fLog << "n_tau: "<< n_tau
+            << ", n_muon: "<< n_muon
+            << ", n_jet: " << n_jet
+            << ", n_vertex: " << n_vertex
+            << ", n_met: " << n_met
+            << ", n_electron: " << n_electron 
+            << endl;
+    }
+    // Trigger selection
+    if (_useTrigger && !isTriggered()) continue;
+    AnaUtil::fillHist1D("counter_gen", 2, _puevWt);
+
+    op.verbose = (_logOption >> 2 & 0x1); 
+    findVtxInfo(vtxList, op, _fLog);
+    int nvtx = vtxList.size();
+    double vz = ( nvtx > 0 ) ? vtxList.at(0).z : -999;
+
+    if (_logOption > 0)
+    _fLog << "Event " << event
+          << " Lumis " << evt->lumis
+          << " Run " << run 
+          << " n_vertex_good " << nvtx
+          << endl;
+
+    op.verbose = (_logOption >> 5 & 0x1);
+    findJetInfo(bjetList, op, _fLog);
+
+    findTriggerObjectInfo(trigObjList);
+
+    // Event Selection Starts here .....
+    // presence of > 1 good vertex
+    if (vtxList.size() < 1) continue;
+    AnaUtil::fillHist1D("counter_gen", 3, _puevWt);
+
+    selectEvent();
+  }  
+  // Analysis is over
+  endJob();
+}
+void SelectionEfficiency::selectEvent() {
+  study_eff();
+}
+void SelectionEfficiency::study_eff()
+{
+  double vz = vtxList.at(0).z;
+
+  int mcounters[] = {0,0,0,0,0,0,0,0,0,0};
+  vector<Muon> fMuoList;
+  for (int indx = 0; indx < n_muon; ++indx) {
+    const Muon* muon = dynamic_cast<Muon*>(muonA->At(indx));
+    if (!muon) continue;
+
+    if (muon->pt <= AnaUtil::cutValue(_muonCutMap, "pt") 
+      || abs(muon->eta) >= AnaUtil::cutValue(_muonCutMap, "eta")) continue;
+    ++mcounters[0];
+
+    if (!muon->isTrackerMuon || !muon->isGlobalMuonPromptTight) continue;
+    ++mcounters[1];
+
+    if (muon->nMatchedStations < AnaUtil::cutValue(_muonCutMap, "nMatchedStations")) continue;
+    ++mcounters[2];
+
+    if (muon->nMatches < AnaUtil::cutValue(_muonCutMap, "nMatches") ||
+        muon->nChambers < AnaUtil::cutValue(_muonCutMap, "nChambers")) continue;
+    ++mcounters[3];
+
+    if (muon->trkHits < AnaUtil::cutValue(_muonCutMap,"trkHits")) continue;
+    ++mcounters[4];
+
+    if (muon->pixHits < AnaUtil::cutValue(_muonCutMap,"pixHits")) continue;
+    ++mcounters[5];
+
+    if (muon->globalChi2 >= AnaUtil::cutValue(_muonCutMap, "globalChi2")) continue;
+    ++mcounters[6];
+
+    if (abs(muon->trkD0) >= AnaUtil::cutValue(_muonCutMap, "trkD0")) continue;
+    ++mcounters[7];
+
+    //if (abs(muon->vtxDistZ) >= AnaUtil::cutValue(_muonCutMap, "vtxDistZ")) continue;
+    bool isGoodVtx;
+    TVector3 vmu = findLeptonVtx(muon->vtxIndex, isGoodVtx);
+    double dz = vmu.z() - vz;
+    if (!isGoodVtx || abs(dz) >= AnaUtil::cutValue(_muonCutMap, "dz")) continue;
+    ++mcounters[8];
+
+    if (abs(muon->pfRelIso) >= AnaUtil::cutValue(_muonCutMap, "pfRelIso")) continue;
+    ++mcounters[9];
+
+    fMuoList.push_back(*muon);
+  }
+  int ishift = 4;
+  for (size_t i = 0; i < NEL(mcounters); ++i) {
+    if (mcounters[i]) AnaUtil::fillHist1D("counter_gen", ishift + i, _puevWt);
+  }
+
+  // atleast 1 good muon
+  if (fMuoList.size() < 1) return;
+  AnaUtil::fillHist1D("counter_gen", 14, _puevWt);
+  const Muon& muo = fMuoList.at(0);
+  TLorentzVector M, T1;
+  M.SetPtEtaPhiE(muo.pt, muo.eta, muo.phi, muo.energy);
+
+  //---------------------------------------------
+  //
+  //              Tau1 SELECTION
+  //
+  //---------------------------------------------
+  int t1counters[] = {0,0,0,0,0,0};
+  vector<Tau> fTau1List;
+  int tau1_indx;
+  for (int indx = 0; indx < n_tau; ++indx) {
+    const Tau* tau = dynamic_cast<Tau*>(tauA->At(indx));
+    if (!tau) continue;
+
+    T1.SetPtEtaPhiE(tau->pt, tau->eta, tau->phi, tau->energy);
+    double dr = AnaUtil::deltaR(M, T1);
+    if (dr < AnaUtil::cutValue(_tau1CutMap, "drMuTau")) continue;
+    ++t1counters[0];
+
+    if (tau->pt <= AnaUtil::cutValue(_tau1CutMap, "pt") || 
+        abs(tau->eta) >= AnaUtil::cutValue(_tau1CutMap, "eta")) continue;
+    ++t1counters[1];
+
+    if (tau->decayModeFinding <= 0.5) continue;
+    ++t1counters[2];
+
+    if (tau->byTightCombinedIsolationDeltaBetaCorr <= 0.5) continue;
+    ++t1counters[3];
+
+    if (tau->againstMuonTight <= 0.5 || 
+        tau->againstElectronLoose <= 0.5) continue;
+    ++t1counters[4];
+
+    if (abs(tau->zvertex - vz) >= AnaUtil::cutValue(_tau1CutMap, "dz")) continue;   
+    ++t1counters[5];
+
+    fTau1List.push_back(*tau);
+    tau1_indx = indx;
+    break; // mandatory
+  }
+  ishift = 15;
+  for (size_t i = 0; i < NEL(t1counters); ++i) {
+    if (t1counters[i]) AnaUtil::fillHist1D("counter_gen", ishift + i, _puevWt);
+  }
+  
+  if (fTau1List.size() < 1) return; 
+  AnaUtil::fillHist1D("counter_gen", 21, _puevWt);
+
+  //---------------------------------------------
+  //
+  //              Tau2 SELECTION
+  //
+  //---------------------------------------------
+  int t2counters[] = {0,0,0,0,0,0,0};
+  vector<Tau> fTau2List;
+  for (int indx = 0; indx < n_tau; ++indx) {
+    if (tau1_indx == indx) continue;
+
+    const Tau* tau = dynamic_cast<Tau*>(tauA->At(indx));
+    if (!tau) continue;
+
+    TLorentzVector T2;
+    T2.SetPtEtaPhiE(tau->pt, tau->eta, tau->phi, tau->energy);
+    double dr = AnaUtil::deltaR(M, T2);
+    double dr1 = AnaUtil::deltaR(T1, T2);
+    if (dr < AnaUtil::cutValue(_tau2CutMap, "drMuTau")) continue;
+    ++t2counters[0];
+
+    if (dr1 < AnaUtil::cutValue(_tau2CutMap, "drTauTau")) continue;
+    ++t2counters[1];
+
+    if (tau->pt <= AnaUtil::cutValue(_tau2CutMap, "pt") || 
+      abs(tau->eta) >= AnaUtil::cutValue(_tau2CutMap, "eta")) continue;
+    ++t2counters[2];
+
+    if (tau->decayModeFinding <= 0.5) continue;
+    ++t2counters[3];
+  
+    if (tau->byMediumCombinedIsolationDeltaBetaCorr <= 0.5) continue;
+    ++t2counters[4];
+
+    if (tau->againstMuonTight <= 0.5 || 
+        tau->againstElectronMedium <= 0.5) continue;
+    ++t2counters[5];
+
+    if (abs(tau->zvertex - vz) >= AnaUtil::cutValue(_tau2CutMap, "dz")) continue;   
+    ++t2counters[6];
+
+    fTau2List.push_back(*tau);
+    break; // optional
+  }
+  ishift = 22;
+  for (size_t i = 0; i < NEL(t2counters); ++i) {
+    if (t2counters[i]) AnaUtil::fillHist1D("counter_gen", ishift + i,_puevWt);
+  }
+  if (fTau2List.size() < 1) return; 
+  AnaUtil::fillHist1D("counter_gen", 29, _puevWt);
+
+  const Tau& taua = fTau1List.at(0);
+  const Tau& taub = fTau2List.at(0);
+
+  double tchg = taua.charge + taub.charge;
+  if (_workflow == "fakerate") {
+    if (tchg == 0) return;
+  }
+  else {
+    if (tchg != 0) return;
+  }
+  AnaUtil::fillHist1D("diTauChg", tchg, _puevWt);
+  AnaUtil::fillHist1D("counter_gen", 30, _puevWt);
+
+  double tdz = abs(taua.zvertex - taub.zvertex);
+  if (tdz >= AnaUtil::cutValue(_evselCutMap, "dzTauTauVtx")) return;
+  AnaUtil::fillHist1D("counter_gen", 31, _puevWt);
+
+  bool isGoodVtx;
+  TVector3 vtxmu = findLeptonVtx(muo.vtxIndex, isGoodVtx);
+  double mutaudz = abs(taua.zvertex - vtxmu.z());
+  if (!isGoodVtx || mutaudz >= AnaUtil::cutValue(_evselCutMap, "dzMuTauVtx")) return;
+  AnaUtil::fillHist1D("counter_gen", 32, _puevWt);
+
+  //---------------------------------------------
+  //
+  //              Muon Veto
+  //
+  //---------------------------------------------
+  int nm = vetoMuon(taua.zvertex, AnaUtil::cutValue(_evselCutMap, "muVetoPt"), 
+		    AnaUtil::cutValue(_evselCutMap, "dzMuTauVtx"));
+  if (nm != 1) return;
+  AnaUtil::fillHist1D("counter_gen", 33, _puevWt);
+  
+  //---------------------------------------------
+  //
+  //              Electron Veto
+  //
+  //---------------------------------------------
+  // electron veto
+  int nele = vetoElectron(taua.zvertex, AnaUtil::cutValue(_electronCutMap, "pt"),
+			  AnaUtil::cutValue(_evselCutMap, "dzEleTauVtx"));
+  if (nele > 0) return;
+  AnaUtil::fillHist1D("counter_gen", 34, _puevWt);
+
+  //---------------------------------------------
+  //
+  //              b-tagged Jets Veto
+  //
+  //---------------------------------------------
+  if (bjetList.size() > 0) return; 
+  AnaUtil::fillHist1D("counter_gen", 35, _puevWt);
+
+  //---------------------------------------------
+  //
+  //              Invariant Mass Veto
+  //
+  //---------------------------------------------
+  const MET* mt = dynamic_cast<MET*>(metA->At(0));
+  assert(mt);
+  double mass1 = sqrt(2*M.Pt()*mt->met*(1-cos(AnaUtil::deltaPhi(M.Phi(), mt->metphi))));
+
+  TLorentzVector T2, zMuTau, diTau;
+  T2.SetPtEtaPhiE(taub.pt, taub.eta, taub.phi, taub.energy);
+  zMuTau = M + T1;
+  diTau = T1 + T2;
+  if (_workflow != "fakerate")
+    if (zMuTau.M() < AnaUtil::cutValue(_evselCutMap, "muTauMass") && 
+        diTau.Pt() < AnaUtil::cutValue(_evselCutMap, "diTauPt")) return;
+  AnaUtil::fillHist1D("counter_gen", 36, _puevWt);
+
+  AnaUtil::fillHist1D("tau2Pt", taub.pt, _puevWt);
+  AnaUtil::fillHist1D("tau1Pt", taua.pt, _puevWt);
+  AnaUtil::fillHist1D("muPt", muo.pt, _puevWt);
+  AnaUtil::fillHist1D("met", mt->met, _puevWt);
+  AnaUtil::fillHist1D("MuTauMass", zMuTau.M(), _puevWt);
+  AnaUtil::fillHist1D("Mt_Mu_Met", mass1, _puevWt);
+  AnaUtil::fillHist1D("diTauPt", diTau.Pt(), _puevWt);
+  AnaUtil::fillHist1D("TauTauMass", diTau.M(), _puevWt);
+
+  if (_isMC && _usePUWt) AnaUtil::fillHist1D("puwt", _puevWt, 1.0);
+}
+// ------------------------------------------------------------------
+// Analysis is over, print summary, save histograms release resources
+// ------------------------------------------------------------------
+void SelectionEfficiency::endJob() 
+{  
+  string slist[] = 
+  {
+    "Events processed",
+    "If Signal, correct channel",
+    "Events passing trigger",
+    "Events with > 0 good vertex",
+    "Muon pT && Eta",
+    "isTrackerMuon && isGlobalMuonPromptTight",
+    "nMatchedStations",
+    "nMatches && nChambers",
+    "# TrackerHit",
+    "# PixelHit",
+    "GlobalChi2",
+    "TrackD0",
+    "dz(muon, event) vertex",
+    "PF RelIso",
+    "nMuon > 0",
+    "dR(Muon, Tau1)",
+    "Tau1 pT && Eta",
+    "Tau1 decayModeFinding",
+    "Tau1 Isolation",
+    "Tau1 Muon && electron veto",
+    "dz(Tau1, event) vertex",
+    "nTau(1) > 0",
+    "dR(Muon, Tau2)",
+    "dR(Tau1, Tau2)",
+    "Tau2 pT && Eta",
+    "Tau2 decayModeFinding",
+    "Tau2 Isolation",
+    "Tau2 Muon && electron veto",
+    "dz(Tau2, event) vertex",
+    "nTau(2) > 0",
+    "DiTau Charge",
+    "dz(Tau1, Tau2) vertex",
+    "dz(Muon, Tau1) vertex",
+    "Muon veto",
+    "Electron veto",
+    "b-Jet veto",
+    "Invariant Mass veto"
+  };
+  _histf->cd();
+
+  TH1 *h = AnaUtil::getHist1D("counter_gen");
+  if (h) {
+    _fLog << setprecision(3);
+    _fLog << "Events Processed: " << int(h->GetBinContent(1)) << endl;
+    for (int i = 2; i <= h->GetNbinsX(); ++i)
+      _fLog << setw(64) << slist[i-1]
+            << setprecision(1) 
+            << setw(10) << h->GetBinContent(i)
+            << setprecision(3) 
+            << setw(10) << ((h->GetBinContent(i-1)>0) ? h->GetBinContent(i)/h->GetBinContent(i-1) : 0.0)
+            << setw(10) << ((h->GetBinContent(2)>0) ? h->GetBinContent(i)/h->GetBinContent(2) : 0.0)
+            << endl;
+  }
+  _histf->Write();
+  _histf->Close();
+  delete _histf;
+
+  _fLog << resetiosflags(ios::fixed);
+  closeFiles();
+}
+// -------------------------------------------------------------------------------
+// Poor man's way of a datacard. Each line between the 'START' and 'END' tags
+// is read in turn, split into words, where the first element is the 'key' and
+// the rest the value(s). If more than one values are present they are 
+// stored in a vector. No safety mechanism is in place. Any line with an unknown 
+// key is skipped. Comments lines should start with either '#' or '//', preferably
+// in the first column. Empty lines are skipped. The file containing the datacards 
+// is passed as the only argument of the program, there is no default
+// -------------------------------------------------------------------------------
+bool SelectionEfficiency::readJob(const string& jobFile, int& nFiles)
+{
+  AnaBase::readJob(jobFile, nFiles);
+
+  static const int BUF_SIZE = 256;
+
+  // Open the file containing the datacards
+  ifstream fin(jobFile.c_str(), ios::in);    
+  if (!fin) {
+    cerr << "Input File: " << jobFile << " could not be opened!" << endl;
+    return false;
+  }
+
+  // note that you must use a pointer (reference!) to the cut map
+  // in order to avoid scope related issues
+  map<string, map<string, double>* > hmap;
+  hmap.insert(pair<string, map<string, double>* >("tau1CutList", &_tau1CutMap));
+  hmap.insert(pair<string, map<string, double>* >("tau2CutList", &_tau2CutMap));
+  hmap.insert(pair<string, map<string, double>* >("evselCutList", &_evselCutMap));
+
+  char buf[BUF_SIZE];
+  vector<string> tokens;
+  while (fin.getline(buf, BUF_SIZE, '\n')) {  // Pops off the newline character
+    string line(buf);
+    if (line.empty() || line == "START") continue;   
+
+    // enable '#' and '//' style comments
+    if (line.substr(0,1) == "#" || line.substr(0,2) == "//") continue;
+    if (line == "END") break;
+
+    // Split the line into words
+    AnaUtil::tokenize(line, tokens);
+    assert(tokens.size() > 1);
+    string key = tokens.at(0);
+    string value = tokens.at(1);
+    if (key == "workflow") {
+      _workflow = value;
+      std::transform(_workflow.begin(), _workflow.end(), _workflow.begin(), ::tolower);
+    }
+    else if (key == "tau1CutList" || key == "tau2CutList" || key == "evselCutList")
+      AnaUtil::storeCuts(tokens, hmap);
+
+    tokens.clear();
+  }
+  // Close the file
+  fin.close();
+
+  printJob();
+
+  return true;
+}
+void SelectionEfficiency::printJob(ostream& os) const
+{
+  AnaBase::printJob(os);
+
+  os << "workflow = " << _workflow << endl;
+
+  map<string, map<string, double> > hmap;
+  hmap.insert(pair<string, map<string, double> >("tau1CutList", _tau1CutMap));
+  hmap.insert(pair<string, map<string, double> >("tau2CutList", _tau2CutMap));
+  AnaUtil::showCuts(hmap, os);
+}
