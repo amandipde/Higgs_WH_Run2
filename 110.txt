@@ -1,0 +1,34 @@
+# Simple counting experiment, with one signal and a few background processes 
+# Simplified version of the 35/pb H->WW analysis for mH = 160 GeV
+imax 1  number of channels
+jmax 3  number of backgrounds
+kmax *  number of nuisance parameters (sources of systematical uncertainties)
+
+-------------
+shapes * * Shape_uncertanity.root $PROCESS $PROCESS_$SYSTEMATIC
+------------
+# we have just one channel, in which we observe 0 events
+bin bin1
+observation 120
+------------
+# now we list the expected events for signal and all backgrounds in that bin
+# the second 'process' line must have a positive number for backgrounds, and 0 for signal
+# then we list the independent sources of uncertainties, and give their effect (syst. error)
+# on each process and bin
+bin                                  bin1         bin1         bin1          bin1
+process                              WH_110            WZ           ZZ           Fakes
+process                               0            1            2             3
+rate                              0.709494        0.171        1.501         109
+------------
+lumi              lnN              1.025          1.025        1.025          -   
+xs_WH             lnN              1.097           -             -            -    
+xs_WZ             lnN               -             1.055          -            -    
+xs_ZZ             lnN               -               -           1.20          -     
+bg_others         lnN               -               -            -           1.10  
+eff_tau           lnN             1.045           1.045         1.145        1.045
+eff_muon          lnN             1.02            1.02          1.02         1.02
+eff_ele           lnN             1.02            1.02          1.02         1.02 
+trigger           lnN             1.02            1.02          1.02          - 
+fake_rate_norm    lnN              -               -             -           1.15
+Tau_energy_scale  lnN             1.012           1.012         1.012        1.012     
+fit              shapeN2          -               -             -            1 
