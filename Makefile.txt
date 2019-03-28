@@ -1,0 +1,20 @@
+CC=g++
+CFLAGS=-c -g -Wall root-config --cflags
+LDFLAGS=root-config --glibs
+SOURCES= src/PhysicsObjects.cc src/AnaBase.cc src/MuonTriggerEfficiency.cc
+OBJECTS=$(SOURCES:.cc=.o)
+EXECUTABLE=trigger
+
+CXX=g++
+CXXFLAGS+= -Wall -Wno-deprecated
+LDFLAGS=root-config --ldflags
+LDLIBS=root-config --glibs
+
+$(EXECUTABLE):$(OBJECTS)
+	$(CXX) $(LDFLAGS) -o $@$^ $(LDLIBS)
+
+.cc.o:
+	$(CXX) $(CXXFLAGS) `root-config --cflags` -o $@ -c $<
+
+clean:
+	rm ./~ ./.o
