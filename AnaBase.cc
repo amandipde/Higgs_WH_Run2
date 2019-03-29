@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <cmath>
 #include <sstream>
+#include <tuple>
 
 #include "TROOT.h"
 #include "TSystem.h"
@@ -1316,7 +1317,7 @@ double AnaBase::matchTriggerObject(const vector<TriggerObject>& trigObjList,
   return dRmin;
 }
 
-double AnaBase::matchTriggerObject(const vector<TriggerObject>& trigObjList, 
+std::tuple<double, int> AnaBase::matchTriggerObject(const vector<TriggerObject>& trigObjList, 
                                    const TLorentzVector& obj, 
                                    const vector<string>& trigLegList, 
                                    int trig_skip, 
@@ -1324,12 +1325,12 @@ double AnaBase::matchTriggerObject(const vector<TriggerObject>& trigObjList,
                                    int& trig_indx, 
                                    uint& flag) const
 {
-  double dRmin = 999; 
+ double dRmin = 999; 
   trig_indx = -1;
   double obj_pt = obj.Pt();
   int indx = 0;
   for (vector<TriggerObject>::const_iterator it  = trigObjList.begin(); 
-                                             it != trigObjList.end(); ++it,++indx) {
+                                             it != trigObjList.end(); ++it,indx++) {
     if (indx == trig_skip) continue;
     const TriggerObject& trigObj = (*it);
     const map<string, uint>& path_list = trigObj.pathList;
@@ -1352,12 +1353,12 @@ double AnaBase::matchTriggerObject(const vector<TriggerObject>& trigObjList,
     TLorentzVector trigTL;
     trigTL.SetPtEtaPhiE(trigObj.pt, trigObj.eta, trigObj.phi, trigObj.energy);
     double dR = AnaUtil::deltaR(obj, trigTL);
-    if (dR < dRmin) {
+    if (dR <dRmin) {
       dRmin = dR;
       trig_indx = indx;
     }
   }
-  return dRmin;
+  return std::make_tuple(dRmin,trig_indx);
 }
 
 
