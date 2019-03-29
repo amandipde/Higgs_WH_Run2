@@ -10,6 +10,8 @@
 #include <cassert>
 #include <cstdlib>
 #include <utility>
+#include <tuple>
+
 
 #include "TROOT.h"
 #include "TSystem.h"
@@ -275,7 +277,7 @@ void MuonTriggerEfficiency::eventLoop()
           << ", n_triggerobj: " << ntriggerobj()
           << ", n_met: " << nmet()
           << ", n_electron: " << nelectron() << endl;
-
+	histf()->cd();
     AnaUtil::fillHist1D("evcounter", 0, puevWt_);
 
     // Trigger selection, do not check prescale
@@ -415,15 +417,20 @@ void MuonTriggerEfficiency::fillTriggerTPHistograms() {
     const Muon& imuon = muonVec.at(iobj);     
     TLorentzVector tagv;
     tagv.SetPtEtaPhiE(imuon.pt, imuon.eta, imuon.phi, imuon.energy);
-
+    
     // Find the Tag
     int tag_trig_indx = -1;
     uint trg_flg1 = 0; 
-    double dRTag = matchTriggerObject(trigObjVec, tagv, _triggerPathLeg1, -1, maxPtDiff, tag_trig_indx, trg_flg1);
-
+    double dRTag; 
+     std::tie(dRTag,tag_trig_indx) = matchTriggerObject(trigObjVec, tagv, _triggerPathLeg1, -1, maxPtDiff, tag_trig_indx, trg_flg1);
+   // double dRTag = matchTriggerObject(trigObjVec, tagv, _triggerPathLeg1, -1, maxPtDiff, tag_trig_indx);
+   // cout<<dRTag<<"   tag->"<<tag_trig_indx<<endl;
+    
     if (tag_trig_indx < 0 || tag_trig_indx >= ntobj) continue;
     _tagDeltaR->Fill(dRTag, puevWt_);
-    TriggerObject tagTrigObj = trigObjVec.at(tag_trig_indx); 
+    TriggerObject tagTrigObj = trigObjVec.at(0); 
+    cout<<tagTrigObj.pt<<endl;
+
     double dRPtTag = tagv.Pt() - tagTrigObj.pt;
     _tagDRVsPt->Fill(imuon.pt, dRTag, puevWt_);
     if (dRTag <= AnaUtil::cutValue(_evselCutMap, "maxDr") && _iFlagL1 == 1) {
@@ -451,8 +458,9 @@ void MuonTriggerEfficiency::fillTriggerTPHistograms() {
 	const Muon& jmuon = muonVec.at(jobj);     
 	TLorentzVector probev;
 	probev.SetPtEtaPhiE(jmuon.pt, jmuon.eta, jmuon.phi, jmuon.energy);
-        double mass = (tagv + probev).M();
-
+        cout<<probev.Pt()<<endl;
+	double mass = (tagv + probev).M();
+	cout<<mass<<endl;
 	_invMass->Fill(mass, puevWt_);
         _tagDRVsInvMass->Fill(mass, dRTag, puevWt_);
 	_probeDRVsPt->Fill(jmuon.pt, dRTag, puevWt_);
@@ -465,9 +473,12 @@ void MuonTriggerEfficiency::fillTriggerTPHistograms() {
 	  probe_found = true;	  
 	  int probe_trig_indx = -1;
           uint trg_flg2 = 0;
-	  double dRProbe = matchTriggerObject(trigObjVec, probev, _triggerPathLeg2, tag_trig_indx, 
+	  double dRProbe;
+	  std::tie(dRProbe,probe_trig_indx) = matchTriggerObject(trigObjVec, probev, _triggerPathLeg2, tag_trig_indx, 
 					      maxPtDiff, probe_trig_indx, trg_flg2);
-          if (probe_trig_indx < 0 || probe_trig_indx >= ntobj) {
+     
+       // cout<<dRProbe<<"			" <<probe_trig_indx <<endl;
+        if (probe_trig_indx < 0 || probe_trig_indx >= ntobj) {
 	    fLog() << " No Trigger Object found for Probe !!! total # of TriggerObjects " 
                   << ntobj
                   << ", drProbe: " << dRProbe << std::endl;
